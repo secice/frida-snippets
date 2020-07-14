@@ -5,21 +5,30 @@
 <details>
 <summary>Native</summary>
 
+* [`Load C/C++ module`](#load-cpp-module)
+* [`One time watchpoint`](#one-time-watchpoint)
+* [`Socket activity`](#socket-activity)
 * [`Intercept open`](#intercept-open)
 * [`Execute shell command`](#execute-shell-command)
 * [`List modules`](#list-modules)
 * [`Log SQLite query`](#log-sqlite-query)
-* [`Reveal manually registered native symbols`](#reveal-native-methods)
 * [`Log method arguments`](#log-method-arguments)
+* [`Intercept entire module`](#intercept-entire-module)
+* [`Dump memory segments`](#dump-memory-segments)
+* [`Memory scan`](#memory-scan)
+* [`Stalker`](#stalker)
 
 </details>
 
 <details>
 <summary>Android</summary>
 
+* [`Get system property`](#system-property-get)
+* [`Reveal manually registered native symbols`](#reveal-native-methods)
 * [`Enumerate loaded classes`](#enumerate-loaded-classes) 
 * [`Class description`](#class-description)
 * [`Turn WiFi off`](#turn-wifi-off)
+* [`Set proxy`](#set-proxy)
 * [`Get IMEI`](#get-imei)
 * [`Hook io InputStream`](#hook-io-inputstream)
 * [`Android make Toast`](#android-make-toast)
@@ -29,21 +38,32 @@
 * [`String comparison`](#string-comparison)
 * [`Hook JNI by address`](#hook-jni-by-address)
 * [`Hook constructor`](#hook-constructor)
-* [`Hook Java refelaction`](#hook-refelaction)
+* [`Hook Java reflection`](#hook-refelaction)
 * [`Trace class`](#trace-class)
-
+* [`Hooking Unity3d`](https://github.com/iddoeldor/mplus)
+* [`Get Android ID`](#get-android-id)
+* [`Change location`](#change-location)
+* [`Bypass FLAG_SECURE`](#bypass-flag_secure)
+* [`Shared Preferences update`](#shared-preferences-update)
+* [`Hook all method overloads`](#hook-overloads)
+* [`Register broadcast receiver`](#register-broadcast-receiver)
+* File system access hook `$ frida --codeshare FrenchYeti/android-file-system-access-hook -f com.example.app --no-pause`
 </details>
 
 <details>
 <summary>iOS</summary>
 
+* [`OS Log`](#os-log)
 * [`iOS alert box`](#ios-alert-box) 
 * [`File access`](#file-access)
 * [`Observe class`](#observe-class)
-* [`Find application UUID`](#find-application-uuid)
+* [`Find application UUID`](#find-ios-application-uuid)
 * [`Extract cookies`](#extract-cookies)
 * [`Describe class members`](#describe-class-members)
 * [`Class hierarchy`](#class-hierarchy) 
+* [`Hook refelaction`](#hook-refelaction)
+* [`Device properties`](#device-properties)
+* [`Take screenshot`](#take-screenshot)
 
 </details>
 
@@ -53,8 +73,250 @@
 ![HAHAHA. No.](https://i.kym-cdn.com/photos/images/original/000/551/854/06f.jpg)
 
 </details>
+<details>
+	<summary>Sublime snippets</summary>
+	
+	{
+	    "scope": "source.js",
+	    "completions": [
+		{"trigger": "fridainterceptor", "contents": "Interceptor.attach(\n    ptr,\n    {\n        onEnter:function(args) {\n\n        },\n        onLeave: function(retval) {\n\n        }\n    }\n)"},
+		{"trigger": "fridaperform", "contents": "function main(){\n    console.log('main()');\n}\n\nconsole.log('script loaded');\nJava.perform(main);"},
+		{"trigger": "fridause", "contents": "var kls = Java.use('kls');"},
+		{"trigger": "fridahex", "contents": "hexdump(\n    ptr,\n    {\n         offset: 0,\n         length: ptr_size\n     }\n);" },
+		{"trigger": "fridabacktrace", "contents": "console.log('called from:\\n' +\n        Thread.backtrace(this.context, Backtracer.ACCURATE)\n        .map(DebugSymbol.fromAddress).join('\\n') + '\\n'\n);"},
+		{"trigger": "fridamods", "contents": "var mods = Process.enumerateModules().filter(function(mod){\n    return mod.name.includes(\"<name>\");\n});"},
+		{"trigger": "fridaexport", "contents": "Module.findExportByName(null, \"<export_name>\");"},
+		{"trigger": "fridabase", "contents": "Module.findBaseAddress(name);"},
+		{"trigger": "fridaoverload", "contents": "kls.method_name.overload().implementation=function(){}"}
+	    ]
+	}
+</details>
+
+
+<details>
+<summary>Vim snippets</summary>	
+
+To list abbreviations `:ab`
+
+Expand by writing `key` and `<Space>`
+
+* Add to `~/.vimrc`
+
+```
+ab fridaintercept Interceptor.attach(ptr, {<CR><Tab>onEnter: function(args) {<CR><CR>},<CR>onLeave: function(retval) {<CR><CR>}<CR><BS>})
+ab fridabacktrace console.warn(Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n'));<ESC>F(3;
+ab fridadescribe console.log(Object.getOwnPropertyNames(Java.use('$').__proto__).join('\n\t'))<Esc>F$
+```
+
+</details>
 
 <hr />
+
+#### Load CPP module
+
+```cpp
+#include <iostream>
+#include <string>
+
+extern "C" {
+  void* create_stdstr(char *data, int size) {
+    std::string* s = new std::string();
+    (*s).assign(data, size);		  
+    return s;
+  }
+}
+```
+
+```sh
+$ ./android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++ a.cpp -o a -shared -static-libstdc++ && adb push a /data/local/tmp/a
+```
+
+```js
+[device]-> 
+function readStdString(str) {
+  if ((str.readU8() & 1) === 1) { // size LSB (=1) indicates if it's a long string
+    return str.add(2 * Process.pointerSize).readPointer().readUtf8String();    
+  }
+  return str.add(1).readUtf8String();  
+}
+[device]-> Module.load('/data/local/tmp/a');
+[device]-> var fp_create_stdstr = Module.findExportByName('a', 'create_stdstr');
+[device]-> var createStdString = new NativeFunction(fp_create_stdstr, 'pointer', ['pointer', 'int']);
+[device]-> var stdstr1 = createStdString(Memory.allocUtf8String("abcd"), 3);
+"0x07691234567"
+[device]-> readStdString(stdstr1);
+"abc"
+```
+
+#### Load C module
+
+* https://frida.re/docs/javascript-api/#cmodule
+* https://frida.re/news/2019/09/18/frida-12-7-released/
+
+
+```sh
+$ ./aarch64-linux-android21-clang /tmp/b.c -o /tmp/a -shared ../sysroot/usr/lib/aarch64-linux-android/21/liblog.so && adb push /tmp/a /data/local/tmp/a
+```
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <android/log.h>    
+
+#define TAG "TEST1"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+void test(void) {
+  FILE* fp = popen("ls -l /sdcard 2>&1", "r");
+  if (fp == NULL)
+    LOGE("executing cmd failed");
+  char b[256];
+  while (fgets(b, sizeof(b), fp) != NULL) {
+    LOGI("%s", b);
+  }
+  pclose(fp);
+}
+
+```
+
+```sh
+$ frida -Uf com.app --no-pause --enable-jit -e "Module.load('/data/local/tmp/a')"
+[ ] -> new NativeFunction(Module.findExportByName('a', 'test'), 'void', [])()
+```
+
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+#### One time watchpoint
+
+Intercept `funcPtr` & log who read/write to `x2` via removing permissions w/ `mprotect`.
+
+```js
+Process.setExceptionHandler(function(exp) {
+  console.warn(JSON.stringify(Object.assign(exp, { _lr: DebugSymbol.fromAddress(exp.context.lr), _pc: DebugSymbol.fromAddress(exp.context.pc) }), null, 2));
+  Memory.protect(exp.memory.address, Process.pointerSize, 'rw-');
+  // can also use `new NativeFunction(Module.findExportByName(null, 'mprotect'), 'int', ['pointer', 'uint', 'int'])(parseInt(this.context.x2), 2, 0)`
+  return true; // goto PC 
+});
+
+Interceptor.attach(funcPtr, {
+  onEnter: function (args) {
+    console.log('onEnter', JSON.stringify({
+      x2: this.context.x2,
+      mprotect_ret: Memory.protect(this.context.x2, 2, '---'),
+      errno: this.errno
+    }, null, 2));
+  },
+  onLeave: function (retval) {
+    console.log('onLeave');
+  }
+});
+```
+
+<details>
+<summary>Output example</summary>
+
+```
+[iOS Device::com.app]-> onEnter {
+  "x2": "0x1c145c6e0",
+  "mprotect_ret": true,
+  "errno": 2
+}
+{
+  "type": "access-violation",
+  "address": "0x1853b0198",
+  "memory": {
+    "operation": "read",
+    "address": "0x1c145c6e0"
+  },
+  "context": {
+    "lr": "0x100453358",
+    "fp": "0x16fb2e860",
+    "x28": "0x0",
+    "x27": "0x0",
+    "x26": "0x104312600",
+    "x25": "0x0",
+    "x24": "0x0",
+    "x23": "0x0",
+    "x22": "0x0",
+    "x21": "0xb000000422bbda03",
+    "x20": "0x1c4a22560",
+    "x19": "0xb000000422bbda03",
+    "x18": "0x0",
+    "x17": "0x100d25290",
+    "x16": "0x1853b0190",
+    "x15": "0x0",
+    "x14": "0x5",
+    "x13": "0xe5a1c4119597",
+    "x12": "0x10e80ca30",
+    "x11": "0x180000003f",
+    "x10": "0x10e80ca00",
+    "x9": "0x1020ad7c3",
+    "x8": "0x0",
+    "x7": "0x0",
+    "x6": "0x0",
+    "x5": "0x0",
+    "x4": "0xb000000422bbda03",
+    "x3": "0x1c4a22560",
+    "x2": "0x1c145c6e0",
+    "x1": "0x1020ad7c3",
+    "x0": "0x1c145c6e0",
+    "sp": "0x16fb2e790",
+    "pc": "0x1853b0198"
+  },
+  "nativeContext": "0x16fc42b24"
+}
+onLeave
+```
+
+
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+#### Socket activity
+
+```js
+Process
+  .getModuleByName({ linux: 'libc.so', darwin: 'libSystem.B.dylib', windows: 'ws2_32.dll' }[Process.platform])
+  .enumerateExports().filter(ex => ex.type === 'function' && ['connect', 'recv', 'send', 'read', 'write'].some(prefix => ex.name.indexOf(prefix) === 0))
+  .forEach(ex => {
+    Interceptor.attach(ex.address, {
+      onEnter: function (args) {
+        var fd = args[0].toInt32();
+        if (Socket.type(fd) !== 'tcp')
+          return;
+        var address = Socket.peerAddress(fd);
+        if (address === null)
+          return;
+        console.log(fd, ex.name, address.ip + ':' + address.port);
+      }
+    })
+  })
+```
+
+<details>
+<summary>Output example</summary>
+	
+Android example
+```sh
+# wrap the script above inside Java.perform
+$ frida -Uf com.example.app -l script.js --no-pause
+[Android Model-X::com.example.app]-> 117 write 5.0.2.1:5242
+117 read 5.0.2.1:5242
+135 write 5.0.2.1:4244
+135 read 5.0.2.1:4244
+135 read 5.0.2.1:4244
+```
+
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
 
 #### Intercept Open
 
@@ -62,27 +324,58 @@ An example for intercepting `libc#open` & logging backtrace if specific file was
 
 ```js
 Interceptor.attach(Module.findExportByName("/system/lib/libc.so", "open"), {
-	onEnter: function(args) {
-		// debug only the intended calls
-		this.flag = false;
-		var filename = Memory.readCString(ptr(args[0]));
-		if (filename.indexOf("something") != -1) {
-			this.flag = true;
-			var backtrace = Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join("\n\t");
-			console.log("file name [ " + Memory.readCString(ptr(args[0])) + " ]\nBacktrace:" + backtrace);
-		}
-	},
-	onLeave: function(retval) {
-		if (this.flag) // passed from onEnter
-			console.warn("\nretval: " + retval);
-	}
+  onEnter: function(args) {
+    this.flag = false;
+    var filename = Memory.readCString(ptr(args[0]));
+    console.log('filename =', filename)
+    if (filename.endsWith(".xml")) {
+      this.flag = true;
+      var backtrace = Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join("\n\t");
+      console.log("file name [ " + Memory.readCString(ptr(args[0])) + " ]\nBacktrace:" + backtrace);
+    }
+  },
+  onLeave: function(retval) {
+    if (this.flag) // passed from onEnter
+      console.warn("\nretval: " + retval);
+  }
+});
+```
+
+
+```js
+var fds = {}; // for f in /proc/`pidof $APP`/fd/*; do echo $f': 'readlink $f; done
+Interceptor.attach(Module.findExportByName(null, 'open'), {
+  onEnter: function (args) {
+    var fname = args[0].readCString();
+    if (fname.endsWith('.jar')) {
+      this.flag = true;
+      this.fname = fname;
+    }
+  },
+  onLeave: function (retval) {
+    if (this.flag) {
+      fds[retval] = this.fname;
+    }
+  }
+});
+['read', 'pread', 'readv'].forEach(fnc => {
+  Interceptor.attach(Module.findExportByName(null, fnc), {
+    onEnter: function (args) {
+      var fd = args[0];
+      if (fd in fds)
+        console.log(`${fnc}: ${fds[fd]}
+	\t${Thread.backtrace(this.context, Backtracer.ACCURATE).map(DebugSymbol.fromAddress).join('\n\t')}`);
+    }
+  });
 });
 ```
 
 <details>
 <summary>Output example</summary>
+Intecepting `com.android.chrome`
+	
+![](https://github.com/iddoeldor/frida-snippets/blob/master/gif/intercept_open_chrome_android.gif)
 
-TODO
 
 </details>
 
@@ -174,6 +467,16 @@ def ls(folder):
         print(chunk.strip().decode())
 ```
 
+Pull binary from iOS
+
+```python
+cmd = Shell(['/bin/sh', '-c', 'cat /System/Library/PrivateFrameworks/Example.framework/example'], None)
+cmd.exec()
+with open('/tmp/example', 'wb+') as f:
+    f.writelines(cmd.output)
+ # $ file /tmp/example
+ # /tmp/example: Mach-O 64-bit 64-bit architecture=12 executable
+```
 </details>
 
 <br>[⬆ Back to top](#table-of-contents)
@@ -190,6 +493,11 @@ Process.enumerateModulesSync()
     });
 ```
 
+List modules & exports
+
+```js
+sudo frida Process --no-pause --eval 'var x={};Process.enumerateModulesSync().forEach(function(m){x[m.name] = Module.enumerateExportsSync(m.name)});x' -q | less +F
+```
 <details>
 <summary>Output example</summary>
 TODO
@@ -213,11 +521,123 @@ TODO
 
 <br>[⬆ Back to top](#table-of-contents)
 
+#### system property get
+
+```js
+Interceptor.attach(Module.findExportByName(null, '__system_property_get'), {
+	onEnter: function (args) {
+		this._name = args[0].readCString();
+		this._value = args[1];
+	},
+	onLeave: function (retval) {
+		console.log(JSON.stringify({
+			result_length: retval,
+			name: this._name,
+			val: this._value.readCString()
+		}));
+	}
+});
+```
+
+<details>
+<summary>Output example</summary>
+
+```sh
+{"result_length":"0x0","name":"ro.kernel.android.tracing","val":""}
+{"result_length":"0x0","name":"ro.config.hw_log","val":""}
+{"result_length":"0x0","name":"ro.config.hw_module_log","val":""}
+{"result_length":"0x1","name":"ro.debuggable","val":"0"}
+{"result_length":"0x1","name":"persist.sys.huawei.debug.on","val":"0"}
+{"result_length":"0x1","name":"ro.logsystem.usertype","val":"6"}
+{"result_length":"0x6","name":"ro.board.platform","val":"hi6250"}
+{"result_length":"0x4","name":"persist.sys.enable_iaware","val":"true"}
+{"result_length":"0x1","name":"persist.sys.cpuset.enable","val":"1"}
+{"result_length":"0x4","name":"persist.sys.cpuset.subswitch","val":"1272"}
+{"result_length":"0x4","name":"persist.sys.boost.durationms","val":"1000"}
+{"result_length":"0x4","name":"persist.sys.boost.isbigcore","val":"true"}
+{"result_length":"0x7","name":"persist.sys.boost.freqmin.b","val":"1805000"}
+{"result_length":"0x4","name":"persist.sys.boost.ipapower","val":"3500"}
+{"result_length":"0x0","name":"persist.sys.boost.skipframe","val":""}
+{"result_length":"0x0","name":"persist.sys.boost.byeachfling","val":""}
+{"result_length":"0x1","name":"debug.force_rtl","val":"0"}
+{"result_length":"0x0","name":"ro.hardware.gralloc","val":""}
+{"result_length":"0x6","name":"ro.hardware","val":"hi6250"}
+{"result_length":"0x0","name":"ro.kernel.qemu","val":""}
+{"result_length":"0x0","name":"ro.config.hw_force_rotation","val":""}
+{"result_length":"0x0","name":"persist.fb_auto_alloc","val":""}
+{"result_length":"0x0","name":"ro.config.hw_lock_res_whitelist","val":""}
+{"result_length":"0x3","name":"ro.sf.lcd_density","val":"480"}
+{"result_length":"0x0","name":"persist.sys.dpi","val":""}
+{"result_length":"0x0","name":"persist.sys.rog.width","val":""}
+{"result_length":"0x4","name":"dalvik.vm.usejitprofiles","val":"true"}
+{"result_length":"0x1","name":"debug.atrace.tags.enableflags","val":"0"}
+{"result_length":"0x1","name":"ro.debuggable","val":"0"}
+{"result_length":"0x1","name":"debug.force_rtl","val":"0"}
+{"result_length":"0x0","name":"ro.config.hw_lock_res_whitelist","val":""}
+....
+```
+	
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
 #### Reveal native methods
 
 `registerNativeMethods` can be used as anti reversing technique to the native .so libraries, e.g. hiding the symbols as much as possible, obfuscating the exported symbols and eventually adding some protection over the JNI bridge.
 [source](https://stackoverflow.com/questions/51811348/find-manually-registered-obfuscated-native-function-address)
 
+```js
+var RevealNativeMethods = function() {
+  var pSize = Process.pointerSize;
+  var env = Java.vm.getEnv();
+  var RegisterNatives = 215, FindClassIndex = 6; // search "215" @ https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/functions.html
+  var jclassAddress2NameMap = {};
+  function getNativeAddress(idx) {
+    return env.handle.readPointer().add(idx * pSize).readPointer();
+  }
+  // intercepting FindClass to populate Map<address, jclass>
+  Interceptor.attach(getNativeAddress(FindClassIndex), {
+    onEnter: function(args) {
+      jclassAddress2NameMap[args[0]] = args[1].readCString();
+    }
+  });
+  // RegisterNative(jClass*, .., JNINativeMethod *methods[nMethods], uint nMethods) // https://android.googlesource.com/platform/libnativehelper/+/master/include_jni/jni.h#977
+  Interceptor.attach(getNativeAddress(RegisterNatives), {
+    onEnter: function(args) {
+      for (var i = 0, nMethods = parseInt(args[3]); i < nMethods; i++) {
+        /*
+          https://android.googlesource.com/platform/libnativehelper/+/master/include_jni/jni.h#129
+          typedef struct {
+             const char* name;
+             const char* signature;
+             void* fnPtr;
+          } JNINativeMethod;
+        */
+        var structSize = pSize * 3; // = sizeof(JNINativeMethod)
+        var methodsPtr = ptr(args[2]);
+        var signature = methodsPtr.add(i * structSize + pSize).readPointer();
+        var fnPtr = methodsPtr.add(i * structSize + (pSize * 2)).readPointer(); // void* fnPtr
+        var jClass = jclassAddress2NameMap[args[0]].split('/');
+	var methodName = methodsPtr.add(i * structSize).readPointer().readCString();
+        console.log('\x1b[3' + '6;01' + 'm', JSON.stringify({
+          module: DebugSymbol.fromAddress(fnPtr)['moduleName'], // https://www.frida.re/docs/javascript-api/#debugsymbol
+          package: jClass.slice(0, -1).join('.'),
+          class: jClass[jClass.length - 1],
+          method: methodName, // methodsPtr.readPointer().readCString(), // char* name
+          signature: signature.readCString(), // char* signature TODO Java bytecode signature parser { Z: 'boolean', B: 'byte', C: 'char', S: 'short', I: 'int', J: 'long', F: 'float', D: 'double', L: 'fully-qualified-class;', '[': 'array' } https://github.com/skylot/jadx/blob/master/jadx-core/src/main/java/jadx/core/dex/nodes/parser/SignatureParser.java
+          address: fnPtr
+        }), '\x1b[39;49;00m');
+      }
+    }
+  });
+}
+
+Java.perform(RevealNativeMethods);
+```
+
+@OldVersion
 ```js
 var fIntercepted = false;
 
@@ -287,7 +707,16 @@ Java.perform(revealNativeMethods);
 
 <details>
 <summary>Output example</summary>
-TODO
+
+```sh
+$ frida -Uf com.google.android.apps.photos --no-pause -l script.js
+```
+
+```sh
+{"class":"org/chromium/net/GURLUtils","method":"nativeGetOrigin","signature":"(Ljava/lang/String;)Ljava/lang/String;","address":"0x..da910"}
+..
+```
+
 </details>
 
 <br>[⬆ Back to top](#table-of-contents)
@@ -527,6 +956,28 @@ TODO
 
 <br>[⬆ Back to top](#table-of-contents)
 
+#### Set proxy
+
+It will set a system-wide proxy using the supplied IP address and port.
+
+```js
+var ActivityThread      = Java.use('android.app.ActivityThread');
+var ConnectivityManager = Java.use('android.net.ConnectivityManager');
+var ProxyInfo           = Java.use('android.net.ProxyInfo');
+
+var proxyInfo           = ProxyInfo.$new('192.168.1.10', 8080, ''); // change to null in order to disable the proxy.
+var context = ActivityThread.currentApplication().getApplicationContext();
+var connectivityManager = Java.cast(context.getSystemService('connectivity'), ConnectivityManager);
+connectivityManager.setGlobalProxy(proxyInfo);
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
 #### Get IMEI
 
 Can also hook & change IMEI.
@@ -597,14 +1048,10 @@ TODO
 #### Android make Toast
 
 ```js
-Java.scheduleOnMainThread(function() {
-	Java.use("android.widget.Toast")
-	    .makeText(
-            	Java.use("android.app.ActivityThread").currentApplication().getApplicationContext(),
-            	"Text to Toast here",
-            	0 // https://developer.android.com/reference/android/widget/Toast#LENGTH_LONG
-        	)
-        .show();
+// 0 = // https://developer.android.com/reference/android/widget/Toast#LENGTH_LONG
+Java.scheduleOnMainThread(() => {
+  Java.use("android.widget.Toast")
+    .makeText(Java.use("android.app.ActivityThread").currentApplication().getApplicationContext(), Java.Use("java.lang.StringBuilder").$new("Text to Toast here"), 0).show();
 });
 ```
 
@@ -783,7 +1230,7 @@ TODO
 
 <br>[⬆ Back to top](#table-of-contents)
 
-#### Hook refelaction
+#### Hook reflection
 
 `java.lang.reflect.Method#invoke(Object obj, Object... args, boolean bool)`
 
@@ -950,6 +1397,216 @@ TODO
 
 <br>[⬆ Back to top](#table-of-contents)
 
+#### Get Android ID
+The [ANDROID_ID](https://developer.android.com/reference/android/provider/Settings.Secure.html#ANDROID_ID) is unique in each application in Android.
+
+
+```javascript
+function getContext() {
+  return Java.use('android.app.ActivityThread').currentApplication().getApplicationContext().getContentResolver();
+}
+
+function logAndroidId() {
+  console.log('[-]', Java.use('android.provider.Settings$Secure').getString(getContext(), 'android_id'));
+}
+```
+
+<details>
+<summary>Output example</summary>
+https://stackoverflow.com/a/54818023/2655092
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+#### Change location
+
+
+```js
+Java.perform(() => {
+	var Location = Java.use('android.location.Location');
+	Location.getLatitude.implementation = function() {
+		return LATITUDE;
+	}
+	Location.getLongitude.implementation = function() {
+		return LONGITUDE;
+	}
+})
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+#### Bypass FLAG_SECURE
+Bypass screenshot prevention [stackoverflow question](https://stackoverflow.com/questions/9822076/how-do-i-prevent-android-taking-a-screenshot-when-my-app-goes-to-the-background)
+
+```javascript
+Java.perform(function() {
+    Java.use('android.view.SurfaceView').setSecure.overload('boolean').implementation = function(flag){
+        console.log('[1] flag:', flag);
+        this.call(false);
+    };
+    var LayoutParams = Java.use('android.view.WindowManager$LayoutParams');
+    Java.use('android.view.ViewWindow').setFlags.overload('int', 'int').implementation = function(flags, mask){
+        console.log('flag secure: ', LayoutParams.FLAG_SECURE.value);
+        console.log('before:', flags);
+        flags = (flags.value & ~LayoutParams.FLAG_SECURE.value);
+        console.log('after:', flags);
+        this.call(this, flags, mask);
+    };
+});
+```
+
+<details>
+<summary>Output example</summary>
+https://stackoverflow.com/a/54818023/2655092
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+#### Shared Preferences update
+
+```javascript
+function notifyNewSharedPreference() {
+  Java.use('android.app.SharedPreferencesImpl$EditorImpl').putString.overload('java.lang.String', 'java.lang.String').implementation = function(k, v) {
+    console.log('[SharedPreferencesImpl]', k, '=', v);
+    return this.putString(k, v);
+  }
+}
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+#### Hook overloads
+
+```javascript
+function hookOverloads(className, func) {
+  var clazz = Java.use(className);
+  var overloads = clazz[func].overloads;
+  for (var i in overloads) {
+    if (overloads[i].hasOwnProperty('argumentTypes')) {
+      var parameters = [];
+
+      var curArgumentTypes = overloads[i].argumentTypes, args = [], argLog = '[';
+      for (var j in curArgumentTypes) {
+        var cName = curArgumentTypes[j].className;
+        parameters.push(cName);
+        argLog += "'(" + cName + ") ' + v" + j + ",";
+        args.push('v' + j);
+      }
+      argLog += ']';
+
+      var script = "var ret = this." + func + '(' + args.join(',') + ") || '';\n"
+        + "console.log(JSON.stringify(" + argLog + "));\n"
+        + "return ret;"
+
+      args.push(script);
+      clazz[func].overload.apply(this, parameters).implementation = Function.apply(null, args);
+    }
+  }
+}
+
+Java.perform(function() {
+  hookOverloads('java.lang.StringBuilder', '$init');
+})
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+#### Register broadcast receiver
+
+```javascript
+Java.perform(() => {
+    const MyBroadcastReceiver = Java.registerClass({
+        name: 'MyBroadcastReceiver',
+        superClass: Java.use('android.content.BroadcastReceiver'),
+        methods: {
+            onReceive: [{
+                returnType: 'void',
+                argumentTypes: ['android.content.Context', 'android.content.Intent'],
+                implementation: function(context, intent) {
+                    // ..
+                }
+            }]
+        },
+    });
+    let ctx = Java.use('android.app.ActivityThread').currentApplication().getApplicationContext();
+    ctx.registerReceiver(MyBroadcastReceiver.$new(), Java.use('android.content.IntentFilter').$new('com.example.JAVA_TO_AGENT'));
+});
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+#### OS Log
+
+```js
+var m = 'libsystem_trace.dylib';
+// bool os_log_type_enabled(os_log_t oslog, os_log_type_t type);
+var isEnabledFunc = Module.findExportByName(m, 'os_log_type_enabled');
+// _os_log_impl(void *dso, os_log_t log, os_log_type_t type, const char *format, uint8_t *buf, unsigned int size);
+var logFunc = Module.findExportByName(m, '_os_log_impl');
+
+// Enable all logs
+Interceptor.attach(isEnabledFunc, {
+  onLeave: function (ret) {
+    ret.replace(0x1);
+  }
+});
+
+Interceptor.attach(logFunc, {
+  onEnter: function (a) {
+/*
+OS_ENUM(os_log_type, uint8_t,
+	OS_LOG_TYPE_DEFAULT = 0x00,
+	OS_LOG_TYPE_INFO    = 0x01,
+	OS_LOG_TYPE_DEBUG   = 0x02,
+	OS_LOG_TYPE_ERROR   = 0x10,
+	OS_LOG_TYPE_FAULT   = 0x11);
+*/
+    var type = a[2]; 
+    var format = a[3];
+    if (type !== 0x2) {
+      console.log(JSON.stringify({
+        type: type,
+        format: format.readCString(),
+        //buf: a[4].readPointer().readCString() // TODO
+      }, null, 2));
+    }
+  }
+})
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
 #### iOS alert box
 
 ```js
@@ -1069,7 +1726,12 @@ function extractUUIDfromPath(path) {
     var bundleIdentifier = String(ObjC.classes.NSBundle.mainBundle().objectForInfoDictionaryKey_('CFBundleIdentifier'));
     var path_prefix = path.substr(0, path.indexOf(PLACEHOLDER));
     var plist_metadata = '/.com.apple.mobile_container_manager.metadata.plist';
-    var folders = ObjC.classes.NSFileManager.defaultManager().contentsOfDirectoryAtPath_error_(path_prefix, NULL);
+    var errorPtr = Memory.alloc(Process.pointerSize); 
+    Memory.writePointer(errorPtr, NULL); 
+    var folders = ObjC.classes.NSFileManager.defaultManager().contentsOfDirectoryAtPath_error_(path_prefix, errorPtr);
+    var error = Memory.readPointer(errorPtr);
+    if (errorPtr) 
+    	console.error( new ObjC.Object( error ) );
     for (var i = 0, l = folders.count(); i < l; i++) {
         var uuid = folders.objectAtIndex_(i);
         var metadata = path_prefix + uuid + plist_metadata;
@@ -1100,18 +1762,23 @@ TODO
 #### Extract cookies
 
 ```js
- var cookieJar = [];
- var cookies = ObjC.classes.NSHTTPCookieStorage.sharedHTTPCookieStorage().cookies();
- for (var i = 0, l = cookies.count(); i < l; i++) {
-     var cookie = cookies['- objectAtIndex:'](i);
-     cookieJar.push(cookie.Name() + '=' + cookie.Value());
- }
- console.log(cookieJar.join("; "));
+var cookieJar = {};
+var cookies = ObjC.classes.NSHTTPCookieStorage.sharedHTTPCookieStorage().cookies();
+for (var i = 0, l = cookies.count(); i < l; i++) {
+  var cookie = cookies['- objectAtIndex:'](i);
+  cookieJar[cookie.Name()] = cookie.Value().toString(); // ["- expiresDate"]().toString()
+}
+console.log(JSON.stringify(cookieJar, null, 2));
 ```
 
 <details>
 <summary>Output example</summary>
-TODO	
+```js
+{
+  "key1": "value 1",
+  "key2": "value 2"
+}
+```
 </details>
 
 <br>[⬆ Back to top](#table-of-contents)
@@ -1197,19 +1864,371 @@ TODO
 
 <br>[⬆ Back to top](#table-of-contents)
 
+#### Hook refelaction 
+Hooking `objc_msgSend`
+
+```py
+import frida, sys
+
+f = open('/tmp/log', 'w')    
+
+def on_message(msg, _data):
+    f.write(msg['payload']+'\n')
+
+frida_script = """
+  Interceptor.attach(Module.findExportByName('/usr/lib/libobjc.A.dylib', 'objc_msgSend'), {
+    onEnter: function(args) {
+     var m = Memory.readCString(args[1]);
+     if (m != 'length' && !m.startsWith('_fastC'))
+        send(m);
+    }
+  });
+"""
+device = frida.get_usb_device()
+pid = device.spawn(["com.example"]) # or .get_frontmost_application()
+session = device.attach(pid)
+script = session.create_script(frida_script)
+script.on('message', on_message)
+script.load()
+device.resume(pid)
+sys.stdin.read()
+```
+```sh
+$ sort /tmp/log | uniq -c | sort -n
+```
+
+<details>
+<summary>Output example</summary>
+TODO	
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+#### Intercept Entire Module
+
+To reduce UI related functions I ues the following steps:
+
+1. Output log to a file using `-o /tmp/log1`   
+2. Copy MRU to excludesList using `$ sort /tmp/log1 | uniq -c | sort -rn | head -n20 | cut -d# -f2 | paste -sd "," -`
+
+```js
+var mName = 'MyModule', excludeList = ['Alot', 'Of', 'UI', 'Related', 'Functions'];
+Module.enumerateExportsSync(mName)
+  .filter(function(e) {
+    var fromTypeFunction = e.type == 'function';·
+    var notInExcludes = excludeList.indexOf(e.name) == -1;
+    return fromTypeFunction && notInExcludes;
+  })
+  .forEach(function(e) {
+    Interceptor.attach(Module.findExportByName(mName, e.name), {
+      onEnter: function(args) {
+        console.log(mName + "#'" + e.name + "'");
+      }
+    })
+  })
+```
+
+<details>
+<summary>Output example</summary>
+TODO	
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+#### Dump memory segments
+
+```js
+Process.enumerateRanges('rw-', {
+	onMatch: function (range) {
+		var fname = `/sdcard/${range.base}_dump`;
+		var f = new File(fname, 'wb');
+		f.write(instance.base.readByteArray(instance.size));
+		f.flush();
+		f.close();
+		console.log(`base=${range.base} size=${range.size} prot=${range.protection} fname=${fname}`);
+	},
+	onComplete: function () {}
+});
+```
+
+<details>
+<summary>Output example</summary>
+TODO	
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+#### Memory scan
+
+```js
+function memscan(str) {
+	Process.enumerateModulesSync().filter(m => m.path.startsWith('/data')).forEach(m => {
+		var pattern = str.split('').map(letter => letter.charCodeAt(0).toString(16)).join(' ');
+		try {
+			var res = Memory.scanSync(m.base, m.size, pattern);
+			if (res.length > 0)
+				console.log(JSON.stringify({m, res}));
+		} catch (e) {
+			console.warn(e);
+		}
+	});
+}
+```
+
+
+```js
+var memscn = function (str) {
+	Process.enumerateModulesSync().forEach(function (m) {
+		var pattern = str.split('').map(function (l) { return l.charCodeAt(0).toString(16) }).join(' ');
+		try {
+			var res = Memory.scanSync(m.base, m.size, pattern);
+			if (res.length > 0)
+				console.log(JSON.stringify({m, res}, null , 2));
+		} catch (e) {
+			console.warn(e);
+		}
+	});
+}
+```
+
+<details>
+<summary>Output example</summary>
+pattern [ 52 41 4e 44 4f 4d ] {
+  "name": "Test",
+  "base": "0x1048fc000",
+  "size": 147000,
+  "path": "/var/containers/Bundle/Application/CD74EB00-9D90-4600-BF5D-F6E5E0CDF878/Test.app/Test"
+}
+[{"address":"0x10491f211","size":6}]
+
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+
+
+
+
+#### Stalker
+
+```js
+  var _module = Process.findModuleByName('myModule');
+  var base = ptr(_module.base);
+  var startTraceOffset = 0xabcd1234, numInstructionsToTrace = 50;
+  var startTrace = base.add(startTraceOffset), endTrace = startTrace.add(4 * (numInstructionsToTrace - 1));
+  
+  Interceptor.attach(ObjC.classes.CustomClass['- func'].implementation, {
+    onEnter: function (args) {
+      var tid = Process.getCurrentThreadId();
+      this.tid = tid;
+      console.warn(`onEnter [ ${tid} ]`);     
+      Stalker.follow(tid, {
+        transform: function (iterator) {
+          var instruction;
+          while ((instruction = iterator.next()) !== null) {
+            // condition to putCallout
+	    if (instruction.address <= endTrace && instruction.address >= startTrace) {     
+	      // print instruction & registers values
+              iter.putCallout(function(context) {
+                var offset = ptr(context.pc).sub(base);
+                var inst = Instruction.parse(context.pc).toString();
+                var modified_inst = inst;
+                inst.replace(/,/g, '').split(' ').forEach(op => {
+                  if (op.startsWith('x'))
+                    modified_inst = modified_inst.replace(op, context[op]);
+                  else if (op.startsWith('w'))
+                    modified_inst = modified_inst.replace(op, context[op.replace('w', 'x')]);
+                });
+                modified_inst = '\x1b[35;01m' + modified_inst + '\x1b[0m';
+                console.log(`x8=${context.x8} x25=${context.x25} x0=${context.x0} x21=${context.x21}`)
+                console.log(`${offset} ${inst} # ${modified_inst}`);
+              });
+	    }
+	    iterator.keep();
+          }
+        }
+      })
+    },  
+    onLeave: function (retval) {
+      console.log(`onLeave [ ${this.tid} ]`);
+      // cleanup
+      Stalker.unfollow(this.tid);
+      Stalker.garbageCollect();
+    }   
+  })  
+```
+
+<details>
+<summary>Output example</summary>
+mul x5, x2, x21 # mul 0x3, 0x4, 0x5
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+
+#### Device properties
+Example of quick&dirty iOS device properties extraction
+
+```js
+var UIDevice = ObjC.classes.UIDevice.currentDevice();
+UIDevice.$ownMethods
+  .filter(function(method) { 
+    return method.indexOf(':') == -1 /* filter out methods with parameters */
+       && method.indexOf('+') == -1 /* filter out public methods */
+  })
+  .forEach(function(method) { 
+    console.log(method, ':', UIDevice[method]())
+  })
+console.log('executablePath =', ObjC.classes.NSBundle.mainBundle().executablePath().toString());
+
+```
+
+<details>
+<summary>Output example</summary>
+
+```
+- adjTrackingEnabled : true
+- adjFbAttributionId : 
+- adjVendorId : 4AAAAAAA-CECC-4BBB-BDDD-DEEEEEEEED18
+- adjDeviceType : iPhone
+- adjDeviceName : iPhone8,2
+- adjCreateUuid : dfaaaa2-ebbd-4ccc-addd-eaeeeeeeee7c
+- adjIdForAdvertisers : 7AAAAA3A-4BBB-4CCC-BDDD-0EEEEEEEE8A6
+- sbf_bannerGraphicsQuality : 100 
+- sbf_controlCenterGraphicsQuality : 100 
+- sbf_homeScreenFolderGraphicsQuality : 100 
+- sbf_searchTransitionGraphicsQuality : 100 
+- sbf_dashBoardPresentationGraphicsQuality : 100 
+- sbf_homeScreenBlurGraphicsQuality : 100 
+- userInterfaceIdiom : 0 
+- _supportsDeepColor : false
+- name : iPhone
+- _keyboardGraphicsQuality : 100 
+- isGeneratingDeviceOrientationNotifications : true
+- orientation : 1 
+- _backlightLevel : 1 
+- isProximityMonitoringEnabled : false
+- systemVersion : 11.1.1
+- _graphicsQuality : 100 
+- beginGeneratingDeviceOrientationNotifications : undefined
+- endGeneratingDeviceOrientationNotifications : undefined
+- buildVersion : 15C222
+- systemName : iOS 
+- _isSystemSoundEnabled : true
+- _feedbackSupportLevel : 1 
+- model : iPhone
+- _supportsForceTouch : true
+- localizedModel : iPhone
+- identifierForVendor : 4A7B44DB-AAAA-BBB-CCC-D8819581DDD
+- isBatteryMonitoringEnabled : false
+- batteryState : 0 
+- batteryLevel : -1
+- proximityState : false
+- isMultitaskingSupported : true
+- playInputClick : undefined
+- _softwareDimmingAlpha : 0 
+- _playInputSelectSound : undefined
+- _playInputDeleteSound : undefined
+- _hasGraphicsQualityOverride : false
+- _hasTouchPad : false
+- _clearGraphicsQualityOverride : undefined
+- _predictionGraphicsQuality : 100 
+- _nativeScreenGamut : 0 
+- _tapticEngine : <_UITapticEngine: 0x1c06257c0>
+```
+
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
+
+#### Take screenshot
+
+```js
+function screenshot() {
+  ObjC.schedule(ObjC.mainQueue, function() {
+    var getNativeFunction = function (ex, retVal, args) {
+      return new NativeFunction(Module.findExportByName('UIKit', ex), retVal, args);
+    };
+    var api = {
+      UIWindow: ObjC.classes.UIWindow,
+      UIGraphicsBeginImageContextWithOptions: getNativeFunction('UIGraphicsBeginImageContextWithOptions', 'void', [['double', 'double'], 'bool', 'double']),
+      UIGraphicsBeginImageContextWithOptions: getNativeFunction('UIGraphicsBeginImageContextWithOptions', 'void', [['double', 'double'], 'bool', 'double']),
+      UIGraphicsEndImageContext: getNativeFunction('UIGraphicsEndImageContext', 'void', []),
+      UIGraphicsGetImageFromCurrentImageContext: getNativeFunction('UIGraphicsGetImageFromCurrentImageContext', 'pointer', []),
+      UIImagePNGRepresentation: getNativeFunction('UIImagePNGRepresentation', 'pointer', ['pointer'])
+    };
+    var view = api.UIWindow.keyWindow();
+    var bounds = view.bounds();
+    var size = bounds[1];
+    api.UIGraphicsBeginImageContextWithOptions(size, 0, 0);
+    view.drawViewHierarchyInRect_afterScreenUpdates_(bounds, true);
+
+    var image = api.UIGraphicsGetImageFromCurrentImageContext();
+    api.UIGraphicsEndImageContext();
+
+    var png = new ObjC.Object(api.UIImagePNGRepresentation(image));
+    send('screenshot', Memory.readByteArray(png.bytes(), png.length()));
+  });
+}
+
+rpc.exports = {
+  takescreenshot: screenshot
+}
+```
+
+```py
+...
+def save_screenshot(d):
+    f = open('/tmp/screenshot.png', 'wb')
+    f.write(d)
+    f.close()
+
+def on_message(msg, data):
+    save_screenshot(data)
+ 
+ script.exports.takescreenshot()
+ 
+ # open screenshot & invoke rpc via input 
+ # <Ctrl+C> will take screenshot, open it with eog & wait for export function name to invoke via input
+ def on_message(msg, data):
+    if 'payload' in msg:
+        if msg['payload'] == 'screenshot':
+            i = '/tmp/screenshot.png'
+            f = open(i, 'wb')
+            f.write(data)
+            f.close()
+            subprocess.call(['eog', i])
+	   
+ while True:
+    try:
+        time.sleep(1)
+    except KeyboardInterrupt:
+        script.exports.takescreenshot()
+        try:
+            getattr(script.exports, input())()
+        except (KeyboardInterrupt, frida.core.RPCException) as e:
+            print('[!]', e)
+
+```
+
+<details>
+<summary>Output example</summary>
+TODO
+</details>
+
+<br>[⬆ Back to top](#table-of-contents)
+
 
 
 #### TODOs 
 - Add GIFs & examples
 - Add links to /scripts
-- Extend universal SSL unpinning for [ios](https://codeshare.frida.re/@dki/ios10-ssl-bypass/) [andoid 1](https://github.com/Fuzion24/JustTrustMe/blob/master/app/src/main/java/just/trust/me/Main.java) [android 2](https://codeshare.frida.re/@pcipolloni/universal-android-ssl-pinning-bypass-with-frida/)
-
-- References overview:
-* https://github.com/mwrlabs/needle/blob/master/needle/modules/hooking/frida/script_touch-id-bypass.py
-* https://github.com/as0ler/frida-scripts/blob/master/NSFileManager_Hooker.py
-* https://techblog.mediaservice.net/2017/09/tracing-arbitrary-methods-and-function-calls-on-android-and-ios/
-* https://zhiwei.li/text/2016/02/01/%E7%BC%96%E8%AF%91frida/
-* https://kov4l3nko.github.io/blog/2018-05-27-sll-pinning-hook-sectrustevaluate/
-* https://www.codemetrix.net/hacking-android-apps-with-frida-1/
-* https://awakened1712.github.io/hacking/hacking-frida/
-* https://techblog.mediaservice.net/2018/11/universal-android-ssl-pinning-bypass-2/ # can be improved https://android.googlesource.com/platform/external/conscrypt/+/idea133-weekly-release/src/main/java/org/conscrypt/TrustManagerImpl.java
+- Extend universal SSL unpinning for [ios](https://codeshare.frida.re/@dki/ios10-ssl-bypass/) [andoid 1](https://github.com/Fuzion24/JustTrustMe/blob/master/app/src/main/java/just/trust/me/Main.java) [android 
